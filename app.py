@@ -109,6 +109,58 @@ def evaluasi_standar_pertanian(n, p, k, ph, suhu):
     hasil['Singkong'] = {"status": status_s, "syarat": saran_s}
 
     return hasil
+def hitung_estimasi_biaya(syarat_list, luas_m2):
+    """Menghitung biaya pupuk berdasarkan saran perbaikan dan luas lahan"""
+    
+    # Harga dari CSV (diasumsikan dalam ribuan rupiah)
+    harga = {
+        "dolomit": 1500, # Rp 1.500 / kg
+        "urea": 3000,    # Rp 3.000 / kg
+        "sp-36": 3500,   # Rp 3.500 / kg
+        "kcl": 5000      # Rp 5.000 / kg
+    }
+    
+    # Asumsi kebutuhan pupuk standar (kg per meter persegi)
+    # 1 Ha = 10.000 m2. (Contoh: Urea 200 kg/Ha = 0.02 kg/m2)
+    dosis_m2 = {
+        "dolomit": 0.2,  
+        "urea": 0.02,    
+        "sp-36": 0.015,  
+        "kcl": 0.01      
+    }
+    
+    total_biaya = 0
+    rincian = []
+    
+    # Gabungkan semua teks saran dan ubah ke huruf kecil untuk pengecekan
+    syarat_teks = " ".join(syarat_list).lower()
+    
+    # Deteksi kebutuhan berdasarkan kata kunci di teks saran
+    if "dolomit" in syarat_teks:
+        kebutuhan = luas_m2 * dosis_m2["dolomit"]
+        biaya = kebutuhan * harga["dolomit"]
+        total_biaya += biaya
+        rincian.append(f"• **Kapur Dolomit**: {kebutuhan:.1f} kg x Rp {harga['dolomit']:,} = **Rp {biaya:,.0f}**")
+        
+    if "urea" in syarat_teks:
+        kebutuhan = luas_m2 * dosis_m2["urea"]
+        biaya = kebutuhan * harga["urea"]
+        total_biaya += biaya
+        rincian.append(f"• **Pupuk Urea**: {kebutuhan:.1f} kg x Rp {harga['urea']:,} = **Rp {biaya:,.0f}**")
+        
+    if "sp-36" in syarat_teks:
+        kebutuhan = luas_m2 * dosis_m2["sp-36"]
+        biaya = kebutuhan * harga["sp-36"]
+        total_biaya += biaya
+        rincian.append(f"• **Pupuk SP-36**: {kebutuhan:.1f} kg x Rp {harga['sp-36']:,} = **Rp {biaya:,.0f}**")
+        
+    if "kcl" in syarat_teks:
+        kebutuhan = luas_m2 * dosis_m2["kcl"]
+        biaya = kebutuhan * harga["kcl"]
+        total_biaya += biaya
+        rincian.append(f"• **Pupuk KCl**: {kebutuhan:.1f} kg x Rp {harga['kcl']:,} = **Rp {biaya:,.0f}**")
+        
+    return total_biaya, rincian
 
 # ==========================================
 # 3. SIDEBAR & UPLOAD FILE
@@ -200,7 +252,9 @@ if uploaded_file:
 
         # Kolom Tengah: Head-to-Head AI vs Pakar
         with col_ai:
+        
             st.markdown("#### ⚖️ Kesimpulan Sistem")
+            
             if pred_ai == pred_pakar:
                 st.markdown(f"<div style='background-color:#2ecc71;padding:10px;border-radius:5px;color:white;'><b>SEPAKAT!</b><br>AI dan Standar Pertanian setuju merekomendasikan <b>{pred_ai}</b>.</div>", unsafe_allow_html=True)
                 
@@ -223,6 +277,7 @@ if uploaded_file:
                 for i, cls in enumerate(model_ai.classes_):
                     st.caption(f"{cls}: {probs[i]*100:.1f}%")
                     st.progress(float(probs[i]))
+                    
 
         # Kolom Kanan: Simulasi Kustom
         with col_pakar:
