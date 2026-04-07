@@ -7,6 +7,7 @@ import plotly.graph_objects as go
 from pykrige.ok import OrdinaryKriging
 from geopy.distance import geodesic
 from sklearn.ensemble import RandomForestClassifier
+import re
 
 # ==========================================
 # 1. SETUP & MODEL AI (Otak Historis)
@@ -35,6 +36,38 @@ if model_ai is None:
 # ==========================================
 # 2. FUNGSI LOGIKA (AREA & STANDAR PAKAR)
 # ==========================================
+def konversi_koordinat(teks_kordinat, is_lat=False):
+    """Mengubah format 7°20'31.40 menjadi desimal -7.342055"""
+    # Jika data sudah berupa angka (float/int), langsung kembalikan
+    if isinstance(teks_kordinat, (int, float)):
+        hasil = float(teks_kordinat)
+    else:
+        # Ubah ke string dan bersihkan spasi
+        teks = str(teks_kordinat).strip()
+        
+        # Ekstrak semua angka dari teks menggunakan Regex
+        angka = re.findall(r"[\d\.]+", teks)
+        
+        if not angka:
+            return 0.0
+            
+        derajat = float(angka[0]) if len(angka) > 0 else 0.0
+        menit = float(angka[1]) if len(angka) > 1 else 0.0
+        detik = float(angka[2]) if len(angka) > 2 else 0.0
+        
+        # Rumus konversi DMS ke Decimal Degrees
+        hasil = derajat + (menit / 60) + (detik / 3600)
+        
+        # Jika teks aslinya punya tanda minus di depan
+        if teks.startswith("-"):
+            hasil = -abs(hasil)
+            
+    # Otomatis jadikan minus untuk Latitude (karena di Lintang Selatan / Indonesia)
+    if is_lat and hasil > 0:
+        hasil = -hasil
+        
+    return hasil
+
 def hitung_luas_dan_grid(df):
     lat_min, lat_max = df['Latitude'].min(), df['Latitude'].max()
     lon_min, lon_max = df['Longitude'].min(), df['Longitude'].max()
@@ -85,6 +118,13 @@ uploaded_file = st.sidebar.file_uploader("Upload Data Lahan (Excel/CSV)", type=[
 
 if uploaded_file:
     df = pd.read_excel(uploaded_file) if uploaded_file.name.endswith('.xlsx') else pd.read_csv(uploaded_file)
+    
+    # --- PROSES PEMBERSIHAN KOORDINAT OTOMATIS ---
+    if 'Latitude' in df.columns and 'Longitude' in df.columns:
+        df['Latitude'] = df['Latitude'].apply(lambda x: konversi_koordinat(x, is_lat=True))
+        df['Longitude'] = df['Longitude'].apply(lambda x: konversi_koordinat(x, is_lat=False))
+    # ---------------------------------------------
+    
     luas, p, l = hitung_luas_dan_grid(df)
     
     st.title(f"📊 Dashboard Digital Twin: {uploaded_file.name}")
@@ -105,9 +145,20 @@ if uploaded_file:
     with tab_satelit:
         # --- BAGIAN ATAS: PETA FULL WIDTH ---
         st.subheader("Lokasi Fisik (Google Satellite)")
-        m = folium.Map(location=[df['Latitude'].mean(), df['Longitude'].mean()], zoom_start=19, tiles=None)
-        folium.TileLayer(tiles='https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', attr='Google', name='Google Satellite').add_to(m)
-
+        m = folium.Map(
+            location=[df['Latitude'].mean(), df['Longitude'].mean()], 
+            zoom_start=19, 
+            max_zoom=22,  # <--- BATAS ZOOM DIBUKA
+            tiles=None
+        )
+        
+        # 2. Tambahkan max_zoom=22 di sini juga
+        folium.TileLayer(
+            tiles='https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', 
+            attr='Google', 
+            name='Google Satellite',
+            max_zoom=22   # <--- BATAS ZOOM TILE DIBUKA
+        ).add_to(m)
         for _, row in df.iterrows():
             info_popup = f"<b>Titik: {row['Nama_Titik']}</b><br>pH: {row['pH']}<br>Suhu: {row['Suhu_Udara']}°C<br>N: {row['N_mg_kg']:.1f} | P: {row['P_mg_kg']:.1f} | K: {row['K_mg_kg']:.1f}"
             folium.CircleMarker(location=[row['Latitude'], row['Longitude']], radius=6, color='yellow', fill=True, fill_color='red', popup=folium.Popup(info_popup, max_width=250)).add_to(m)
@@ -152,11 +203,21 @@ if uploaded_file:
             st.markdown("#### ⚖️ Kesimpulan Sistem")
             if pred_ai == pred_pakar:
                 st.markdown(f"<div style='background-color:#2ecc71;padding:10px;border-radius:5px;color:white;'><b>SEPAKAT!</b><br>AI dan Standar Pertanian setuju merekomendasikan <b>{pred_ai}</b>.</div>", unsafe_allow_html=True)
-                if eval_standar[pred_ai]['syarat']:
-                    st.warning("**Saran Optimalisasi:**\n" + "\n".join([f"- {s}" for s in eval_standar[pred_ai]['syarat']]))
+                
+                syarat_sepakat = eval_standar[pred_ai]['syarat']
+                if syarat_sepakat:
+                    st.warning("**Saran Optimalisasi:**\n" + "\n".join([f"- {s}" for s in syarat_sepakat]))
+                else:
+                    st.success("**Saran Optimalisasi:**\n- Kondisi sudah optimal, tidak ada penanganan khusus yang diperlukan.")
+                    
             else:
                 st.markdown(f"<div style='background-color:#e67e22;padding:10px;border-radius:5px;color:white;'><b>BERBEDA PENDAPAT!</b><br>AI condong ke <b>{pred_ai}</b> (Riwayat), tetapi kondisi riil ideal untuk <b>{pred_pakar}</b> (Pakar).</div>", unsafe_allow_html=True)
-                st.warning(f"**Saran jika ingin tanam {pred_ai}:**\n" + "\n".join([f"- {s}" for s in eval_standar[pred_ai]['syarat']]))
+                
+                syarat_beda = eval_standar[pred_ai]['syarat']
+                if syarat_beda:
+                    st.warning(f"**Saran jika ingin tanam {pred_ai}:**\n" + "\n".join([f"- {s}" for s in syarat_beda]))
+                else:
+                    st.info(f"**Saran jika ingin tanam {pred_ai}:**\n- Parameter utama (pH, Suhu, Hara) secara umum sudah memenuhi ambang batas minimum untuk {pred_ai}. Anda bisa tetap menanamnya.")
             
             with st.expander("Lihat Detail Probabilitas AI"):
                 for i, cls in enumerate(model_ai.classes_):
