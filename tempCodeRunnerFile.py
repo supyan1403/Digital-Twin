@@ -1,0 +1,1 @@
+plt.gca().ticklabel_format(useOffset=False, style='plain')

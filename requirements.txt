@@ -1,0 +1,9 @@
+streamlit
+pandas
+numpy
+matplotlib
+pykrige
+scikit-learn
+openpyxl
+plotly
+pydeck
