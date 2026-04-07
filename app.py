@@ -189,12 +189,12 @@ if uploaded_file:
 
     st.divider()
 
-    tab_satelit, tab_spasial = st.tabs(["🛰️ Lokasi & Analisis Keputusan", "⛰️ Peta 3D Kriging (Iklim & Hara)"])
+    tab_data, tab_spasial, tab_heatmap = st.tabs(["📊 Data Kesuburan", "🗺️ Pemodelan 3D (Kriging)", "🌡️ Peta Heatmap 2D"])
 
     # ==========================================
     # TAB 1: PETA SATELIT FULL WIDTH & PANEL BAWAH
     # ==========================================
-    with tab_satelit:
+    with tab_data:
         # --- BAGIAN ATAS: PETA FULL WIDTH ---
         st.subheader("Lokasi Fisik (Google Satellite)")
         m = folium.Map(
@@ -306,28 +306,180 @@ if uploaded_file:
             else:
                 st.write("Kandungan tanah sudah optimal.")
 
-    # ==========================================
+   # ==========================================
     # TAB 2: KRIGING 3D 
     # ==========================================
     with tab_spasial:
         st.subheader("Pemodelan Spasial 3D (Kriging)")
-        gx = np.linspace(df['Longitude'].min(), df['Longitude'].max(), 50)
-        gy = np.linspace(df['Latitude'].min(), df['Latitude'].max(), 50)
         
-        params = {"Nitrogen (N)": {"col": "N_mg_kg", "color": "Blues"}, "Fosfor (P)": {"col": "P_mg_kg", "color": "YlOrBr"}, "Kalium (K)": {"col": "K_mg_kg", "color": "Reds"}, "pH Tanah": {"col": "pH", "color": "Viridis"}, "Kelembapan (%)": {"col": "Kelembapan_Persen", "color": "Teal"}, "Suhu Udara (°C)": {"col": "Suhu_Udara", "color": "Plasma"}}
+        # Pastikan tidak ada data koordinat yang kosong sebelum membuat area grid
+        df_kriging = df.dropna(subset=['Latitude', 'Longitude'])
+        
+        gx = np.linspace(df_kriging['Longitude'].min(), df_kriging['Longitude'].max(), 50)
+        gy = np.linspace(df_kriging['Latitude'].min(), df_kriging['Latitude'].max(), 50)
+        
+        params = {
+            "Nitrogen (N)": {"col": "N_mg_kg", "color": "Blues"}, 
+            "Fosfor (P)": {"col": "P_mg_kg", "color": "YlOrBr"}, 
+            "Kalium (K)": {"col": "K_mg_kg", "color": "Reds"}, 
+            "pH Tanah": {"col": "pH", "color": "Viridis"}, 
+            "Kelembapan (%)": {"col": "Kelembapan_Persen", "color": "Teal"}, 
+            "Suhu Udara (°C)": {"col": "Suhu_Udara", "color": "Plasma"}
+        }
         
         col_k1, col_k2 = st.columns(2)
         for i, (label, info) in enumerate(params.items()):
             with (col_k1 if i % 2 == 0 else col_k2):
                 st.markdown(f"**{label}**")
+                
+                # Buang baris yang nilai hara/pH-nya kosong
+                df_param = df_kriging.dropna(subset=[info['col']])
+                
                 try:
-                    ok = OrdinaryKriging(df['Longitude'], df['Latitude'], df[info['col']], variogram_model='linear')
-                    z, _ = ok.execute('grid', gx, gy)
-                    fig = go.Figure(data=[go.Surface(z=z, x=gx, y=gy, colorscale=info['color'], showscale=False)])
-                    fig.update_layout(height=400, margin=dict(l=0, r=0, b=0, t=0), scene=dict(zaxis_title=label, xaxis=dict(showticklabels=False, title=""), yaxis=dict(showticklabels=False, title="")))
-                    st.plotly_chart(fig, use_container_width=True)
-                except:
-                    pass
+                    # Konversi paksa ke angka desimal (float)
+                    x_val = df_param['Longitude'].astype(float).values
+                    y_val = df_param['Latitude'].astype(float).values
+                    z_val = df_param[info['col']].astype(float).values
+                    
+                    if np.std(z_val) == 0:
+                        z_val = z_val + np.random.normal(0, 0.0001, len(z_val))
 
-else:
-    st.info("👈 Silakan upload file dataset lahan Anda (Excel/CSV) di menu samping untuk memulai simulasi.")
+                    # ALGORITMA KRIGING
+                    ok = OrdinaryKriging(
+                        x_val, y_val, z_val, 
+                        variogram_model='spherical', 
+                        pseudo_inv=True,             
+                        exact_values=False 
+                    )
+                    z, _ = ok.execute('grid', gx, gy)
+                    
+                    # 1. BUAT LAYER PERMUKAAN (SURFACE) KRIGING 3D
+                    surface_layer = go.Surface(
+                        z=z, 
+                        x=gx, 
+                        y=gy, 
+                        colorscale=info['color'], 
+                        showscale=False,
+                        opacity=0.9 # Sedikit transparan agar titik di bawah tidak sepenuhnya hilang
+                    )
+                    
+                    # 2. BUAT LAYER TITIK SAMPEL (SCATTER 3D) DI ATAS PERMUKAAN
+                    # Kita naikkan z_val sedikit (ditambah 5% dari tinggi maksimal gelombang)
+                    # agar titik hitamnya tidak tenggelam di dalam "bukit" Kriging.
+                    elevasi_titik = z_val + (np.max(z) - np.min(z)) * 0.05
+                    
+                    scatter_layer = go.Scatter3d(
+                        x=x_val, 
+                        y=y_val, 
+                        z=elevasi_titik,
+                        mode='markers+text',
+                        marker=dict(size=5, color='black', symbol='circle'),
+                        text=df_param['Nama_Titik'].astype(str).values if 'Nama_Titik' in df_param.columns else [str(n+1) for n in range(len(x_val))],
+                        textposition='top center',
+                        textfont=dict(size=12, color='black', weight='bold'),
+                        name="Titik Sampel"
+                    )
+                    
+                    # Gabungkan kedua layer 3D ke dalam satu figure
+                    fig = go.Figure(data=[surface_layer, scatter_layer])
+                    
+                    fig.update_layout(
+                        height=500, 
+                        margin=dict(l=0, r=0, b=0, t=0), 
+                        scene=dict(
+                            aspectmode='data', # <--- INI KUNCI UTAMA UNTUK 3D (Memaksa rasio asli data)
+                            zaxis_title=label, 
+                            xaxis=dict(showticklabels=True, title="Longitude"),
+                            yaxis=dict(showticklabels=True, title="Latitude")
+                        ),
+                        showlegend=False
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                except Exception as e:
+                    st.error(f"Gagal memproses {label}. Error detail: {e}")
+    # ==========================================
+    # TAB 3: PETA HEATMAP 2D (KONTUR DATAR)
+    # ==========================================
+    with tab_heatmap:
+        st.subheader("Peta Persebaran Hara 2D (Heatmap)")
+        st.markdown("Peta ini menampilkan proyeksi datar (top-down) dari hasil interpolasi Kriging, memudahkan pembacaan lokasi presisi untuk setiap titik sampel.")
+        
+        # Grid resolusi tinggi untuk Heatmap yang lebih mulus
+        gx_2d = np.linspace(df_kriging['Longitude'].min(), df_kriging['Longitude'].max(), 100)
+        gy_2d = np.linspace(df_kriging['Latitude'].min(), df_kriging['Latitude'].max(), 100)
+        
+        col_h1, col_h2 = st.columns(2)
+        for i, (label, info) in enumerate(params.items()):
+            with (col_h1 if i % 2 == 0 else col_h2):
+                st.markdown(f"**{label}**")
+                
+                df_param_2d = df_kriging.dropna(subset=[info['col']])
+                
+                try:
+                    x_val = df_param_2d['Longitude'].astype(float).values
+                    y_val = df_param_2d['Latitude'].astype(float).values
+                    z_val = df_param_2d[info['col']].astype(float).values
+                    
+                    if np.std(z_val) == 0:
+                        z_val = z_val + np.random.normal(0, 0.0001, len(z_val))
+
+                    # Kriging dengan Spherical Model (Sama dengan 3D)
+                    ok = OrdinaryKriging(
+                        x_val, y_val, z_val, 
+                        variogram_model='spherical', 
+                        pseudo_inv=True,             
+                        exact_values=False 
+                    )
+                    z_2d, _ = ok.execute('grid', gx_2d, gy_2d)
+                    
+                    # 1. LAYER HEATMAP 2D (Contour)
+                    heatmap_layer = go.Contour(
+                        z=z_2d, 
+                        x=gx_2d, 
+                        y=gy_2d, 
+                        colorscale=info['color'], 
+                        showscale=True, # Tampilkan skala warna
+                        colorbar=dict(title=label, len=0.8, thickness=15)
+                    )
+                    
+                    # 2. LAYER TITIK SAMPEL 2D
+                    scatter_layer_2d = go.Scatter(
+                        x=x_val, 
+                        y=y_val, 
+                        mode='markers+text',
+                        marker=dict(size=8, color='black', line=dict(width=1.5, color='white')), 
+                        text=df_param_2d['Nama_Titik'].astype(str).values if 'Nama_Titik' in df_param_2d.columns else [str(n+1) for n in range(len(x_val))],
+                        textposition='top center',
+                        textfont=dict(size=12, color='black', weight='bold'),
+                        name="Titik Sampel"
+                    )
+                    
+                    fig_2d = go.Figure(data=[heatmap_layer, scatter_layer_2d])
+                    
+                    # Layout 2D Datar
+                    # Layout 2D Datar dengan Skala Rasio Terkunci (1:1)
+                    fig_2d.update_layout(
+                        height=600, # Perbesar sedikit agar nyaman dilihat
+                        margin=dict(l=20, r=20, b=20, t=10), 
+                        xaxis=dict(
+                            title="Longitude",
+                            scaleanchor="y",  # <--- INI KUNCI UTAMANYA
+                            scaleratio=1,     # <--- Mengunci rasio 1:1 antara X dan Y
+                            showgrid=False
+                        ),
+                        yaxis=dict(
+                            title="Latitude",
+                            showgrid=False
+                        ),
+                        plot_bgcolor='white'
+                    )
+                    
+                    # Matikan fitur zoom yang tidak beraturan agar peta tidak rusak saat digeser
+                    fig_2d.update_xaxes(fixedrange=True)
+                    fig_2d.update_yaxes(fixedrange=True)
+                    
+                    st.plotly_chart(fig_2d, use_container_width=True)
+                    
+                except Exception as e:
+                    st.error(f"Gagal memproses Heatmap {label}: {e}")
