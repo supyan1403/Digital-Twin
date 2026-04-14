@@ -8,6 +8,20 @@ from pykrige.ok import OrdinaryKriging
 from geopy.distance import geodesic
 from sklearn.ensemble import RandomForestClassifier
 import re
+import math
+from scipy.spatial import KDTree
+from shapely.geometry import Polygon, Point
+
+
+params = {
+        "Nitrogen (N)": {"col": "N_mg_kg", "color": "Blues"}, 
+        "Fosfor (P)": {"col": "P_mg_kg", "color": "YlOrBr"}, 
+        "Kalium (K)": {"col": "K_mg_kg", "color": "Reds"}, 
+        "pH Tanah": {"col": "pH", "color": "Viridis"}, 
+        "Kelembapan (%)": {"col": "Kelembapan_Persen", "color": "Teal"}, 
+        "Suhu Udara (°C)": {"col": "Suhu_Udara", "color": "Plasma"}
+        
+}
 
 # ==========================================
 # 1. SETUP & MODEL AI (Otak Historis)
@@ -68,13 +82,45 @@ def konversi_koordinat(teks_kordinat, is_lat=False):
         
     return hasil
 
+from scipy.spatial import ConvexHull
+
+def hitung_luas_m2(lons, lats):
+    # 1. Konversi derajat ke meter (pendekatan sederhana di ekuator)
+    # 1 derajat lat kira-kira 111,320 meter
+    # 1 derajat lon kira-kira 111,320 * cos(lat) meter
+    lat_ref = np.mean(lats)
+    x = lons * (111320 * np.cos(np.radians(lat_ref)))
+    y = lats * 111320
+    
+    # 2. Ambil titik terluar (Convex Hull)
+    points = np.column_stack((x, y))
+    hull = ConvexHull(points)
+    
+    # 3. Luas area hull dalam meter persegi
+    return hull.volume # Dalam ConvexHull 2D, 'volume' adalah Luas
+
 def hitung_luas_dan_grid(df):
-    lat_min, lat_max = df['Latitude'].min(), df['Latitude'].max()
-    lon_min, lon_max = df['Longitude'].min(), df['Longitude'].max()
-    lebar = geodesic((lat_min, lon_min), (lat_min, lon_max)).meters
-    panjang = geodesic((lat_min, lon_min), (lat_max, lon_min)).meters
-    luas_m2 = panjang * lebar
-    return luas_m2, panjang, lebar
+    try:
+        # Cari data secara spesifik berdasarkan Nama_Titik
+        t1 = df[df['Nama_Titik'] == 'T1'].iloc[0]
+        t4 = df[df['Nama_Titik'] == 'T4'].iloc[0]     # Titik penentu Lebar
+        t21 = df[df['Nama_Titik'] == 'T21'].iloc[0]   # Titik penentu Panjang
+
+        # Ukur pakai Haversine
+        lebar = hitung_jarak_meter(t1['Latitude'], t1['Longitude'], t4['Latitude'], t4['Longitude'])
+        panjang = hitung_jarak_meter(t1['Latitude'], t1['Longitude'], t21['Latitude'], t21['Longitude'])
+        
+        # Bulatkan secara langsung
+        lebar = round(lebar)
+        panjang = round(panjang)
+        luas_m2 = panjang * lebar
+        
+        return luas_m2, panjang, lebar
+
+    except Exception as e:
+        st.error(f"Terjadi kesalahan saat mengukur: {e}")
+        # Fallback (Metode cadangan)
+        return 600, 30, 20  # Jika sistem gagal membaca, paksa keluarkan 30x20
 
 def evaluasi_standar_pertanian(n, p, k, ph, suhu):
     """Otak Pakar: Evaluasi Kesesuaian Lahan Saintifik"""
@@ -162,6 +208,19 @@ def hitung_estimasi_biaya(syarat_list, luas_m2):
         
     return total_biaya, rincian
 
+def hitung_jarak_meter(lat1, lon1, lat2, lon2):
+    # Rumus Haversine sederhana untuk menghitung jarak meter
+    R = 6371000  # Jari-jari bumi dalam meter
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+    return R * c
+
+
+
+
 # ==========================================
 # 3. SIDEBAR & UPLOAD FILE
 # ==========================================
@@ -170,6 +229,8 @@ uploaded_file = st.sidebar.file_uploader("Upload Data Lahan (Excel/CSV)", type=[
 
 if uploaded_file:
     df = pd.read_excel(uploaded_file) if uploaded_file.name.endswith('.xlsx') else pd.read_csv(uploaded_file)
+
+    df = df.sort_values(by=['Longitude', 'Latitude'], ascending=[True, False]).reset_index(drop=True)
     
     # --- PROSES PEMBERSIHAN KOORDINAT OTOMATIS ---
     if 'Latitude' in df.columns and 'Longitude' in df.columns:
@@ -181,305 +242,318 @@ if uploaded_file:
     
     st.title(f"📊 Dashboard Digital Twin: {uploaded_file.name}")
     
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Total Luas Lahan", f"{luas:.0f} m²", f"{luas/10000:.2f} Ha")
-    m2.metric("Estimasi Dimensi", f"{p:.1f}m x {l:.1f}m")
+    m3, m4 = st.columns(2)
+    # m1.metric("Total Luas Lahan", f"{luas:.0f} m²", f"{luas/10000:.2f} Ha")
+    # m2.metric("Estimasi Dimensi", f"{p:.1f}m x {l:.1f}m")
     m3.metric("Jumlah Titik Sampel", f"{len(df)} Titik")
     m4.metric("Sistem Pakar", "AI & Standar Aktif")
 
     st.divider()
 
-    tab_data, tab_spasial, tab_heatmap = st.tabs(["📊 Data Kesuburan", "🗺️ Pemodelan 3D (Kriging)", "🌡️ Peta Heatmap 2D"])
+    tab_data, tab_spasial = st.tabs(["📊 Data Kesuburan", "🗺️ Pemodelan 3D (Kriging)"])
 
-    # ==========================================
-    # TAB 1: PETA SATELIT FULL WIDTH & PANEL BAWAH
+  # ==========================================
+    # TAB 1: PETA SATELIT & PANEL ANALISIS
     # ==========================================
     with tab_data:
-        # --- BAGIAN ATAS: PETA FULL WIDTH ---
+        # --- BAGIAN ATAS: PETA SATELIT ---
         st.subheader("Lokasi Fisik (Google Satellite)")
+        
         m = folium.Map(
             location=[df['Latitude'].mean(), df['Longitude'].mean()], 
             zoom_start=19, 
-            max_zoom=22,  # <--- BATAS ZOOM DIBUKA
+            max_zoom=22, 
             tiles=None
         )
         
-        # 2. Tambahkan max_zoom=22 di sini juga
         folium.TileLayer(
             tiles='https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', 
             attr='Google', 
             name='Google Satellite',
-            max_zoom=22   # <--- BATAS ZOOM TILE DIBUKA
+            max_zoom=22
         ).add_to(m)
-        for _, row in df.iterrows():
-            info_popup = f"<b>Titik: {row['Nama_Titik']}</b><br>pH: {row['pH']}<br>Suhu: {row['Suhu_Udara']}°C<br>N: {row['N_mg_kg']:.1f} | P: {row['P_mg_kg']:.1f} | K: {row['K_mg_kg']:.1f}"
-            folium.CircleMarker(location=[row['Latitude'], row['Longitude']], radius=6, color='yellow', fill=True, fill_color='red', popup=folium.Popup(info_popup, max_width=250)).add_to(m)
+
+        for i, row in df.iterrows():
+            label_titik = row['Nama_Titik'] if 'Nama_Titik' in df.columns else f"T{i+1}"
+            
+            # Marker Bulat
+            folium.CircleMarker(
+                location=[row['Latitude'], row['Longitude']],
+                radius=6, color='yellow', fill=True, fill_color='red', fill_opacity=0.9
+            ).add_to(m)
+
+            # Label T1-T28 Permanen
+            folium.Marker(
+                location=[row['Latitude'], row['Longitude']],
+                icon=folium.DivIcon(
+                    icon_size=(150,36),
+                    icon_anchor=(7, 20),
+                    html=f'<div style="font-size: 10pt; color: white; font-weight: bold; text-shadow: 2px 2px 4px #000;">{label_titik}</div>'
+                )
+            ).add_to(m)
         
-        # Peta diubah menjadi lebih lebar
         st_folium(m, width=1200, height=450)
-        
         st.divider()
 
         # --- BAGIAN BAWAH: PANEL ANALISIS ---
         st.subheader("💡 Analisis & Keputusan SPK (Per Titik)")
         
-        # Membagi panel bawah menjadi 3 kolom agar rapi
+        # 1. TENTUKAN DATA TERLEBIH DAHULU (Sebelum bagi kolom)
+        titik_list = df['Nama_Titik'].unique() if 'Nama_Titik' in df.columns else [f"T{i+1}" for i in range(len(df))]
+        titik_terpilih = st.selectbox("📍 Pilih ID Titik untuk Dianalisis:", titik_list)
+        
+        # Ambil Data Titik
+        if 'Nama_Titik' in df.columns:
+            dt = df[df['Nama_Titik'] == titik_terpilih].iloc[0]
+        else:
+            idx = int(titik_terpilih.replace("T", "")) - 1
+            dt = df.iloc[idx]
+            
+        # HITUNG EVALUASI (Ini kuncinya agar tidak NameError)
+        eval_standar = evaluasi_standar_pertanian(
+            dt['N_mg_kg'], dt['P_mg_kg'], dt['K_mg_kg'], dt['pH'], dt['Suhu_Udara']
+        )
+
+        # 2. BARU BAGI KOLOM UNTUK MENAMPILKAN HASIL
         col_input, col_ai, col_pakar = st.columns([1, 1.5, 1.5])
         
-        # Kolom Kiri: Pemilihan Titik & Data Mentah
         with col_input:
-            titik = st.selectbox("📍 Pilih ID Titik:", df['Nama_Titik'].unique())
-            dt = df[df['Nama_Titik'] == titik].iloc[0]
-            
-            with st.expander("Parameter Lingkungan", expanded=True):
-                st.write(f"**N:** {dt['N_mg_kg']:.2f} | **P:** {dt['P_mg_kg']:.2f} | **K:** {dt['K_mg_kg']:.2f}")
-                st.write(f"**pH:** {dt['pH']:.1f} | **Lembap:** {dt['Kelembapan_Persen']:.1f}% | **Suhu:** {dt['Suhu_Udara']:.1f}°C")
+            with st.expander("📝 Parameter Riil", expanded=True):
+                st.write(f"**N:** {dt['N_mg_kg']:.2f} | **P:** {dt['P_mg_kg']:.2f}")
+                st.write(f"**K:** {dt['K_mg_kg']:.2f} | **pH:** {dt['pH']:.1f}")
+                st.write(f"**Suhu:** {dt['Suhu_Udara']:.1f}°C")
 
-        # Proses Data
-        input_val = [[dt['N_mg_kg'], dt['P_mg_kg'], dt['K_mg_kg'], dt['pH'], dt['Kelembapan_Persen'], dt['Suhu_Udara']]]
-        pred_ai = model_ai.predict(input_val)[0]
-        probs = model_ai.predict_proba(input_val)[0]
-        eval_standar = evaluasi_standar_pertanian(dt['N_mg_kg'], dt['P_mg_kg'], dt['K_mg_kg'], dt['pH'], dt['Suhu_Udara'])
-        
-        s1_crops = [c for c, d in eval_standar.items() if 'S1' in d['status']]
-        s2_crops = [c for c, d in eval_standar.items() if 'S2' in d['status']]
-        if s1_crops:
-            pred_pakar, alasan = s1_crops[0], "Karena berstatus S1 (Sangat Sesuai)"
-        elif s2_crops:
-            pred_pakar, alasan = s2_crops[0], "Karena berstatus S2 (Cukup Sesuai)"
-        else:
-            pred_pakar, alasan = "Tidak ada yang ideal", "Semua tanaman berstatus S3"
-
-        # Kolom Tengah: Head-to-Head AI vs Pakar
+        # Kolom Tengah: AI
         with col_ai:
+            st.markdown("#### ⚖️ Rekomendasi AI")
+            input_val = [[dt['N_mg_kg'], dt['P_mg_kg'], dt['K_mg_kg'], dt['pH'], dt['Kelembapan_Persen'], dt['Suhu_Udara']]]
         
-            st.markdown("#### ⚖️ Kesimpulan Sistem")
-            
-            if pred_ai == pred_pakar:
-                st.markdown(f"<div style='background-color:#2ecc71;padding:10px;border-radius:5px;color:white;'><b>SEPAKAT!</b><br>AI dan Standar Pertanian setuju merekomendasikan <b>{pred_ai}</b>.</div>", unsafe_allow_html=True)
-                
-                syarat_sepakat = eval_standar[pred_ai]['syarat']
-                if syarat_sepakat:
-                    st.warning("**Saran Optimalisasi:**\n" + "\n".join([f"- {s}" for s in syarat_sepakat]))
-                else:
-                    st.success("**Saran Optimalisasi:**\n- Kondisi sudah optimal, tidak ada penanganan khusus yang diperlukan.")
-                    
-            else:
-                st.markdown(f"<div style='background-color:#e67e22;padding:10px;border-radius:5px;color:white;'><b>BERBEDA PENDAPAT!</b><br>AI condong ke <b>{pred_ai}</b> (Riwayat), tetapi kondisi riil ideal untuk <b>{pred_pakar}</b> (Pakar).</div>", unsafe_allow_html=True)
-                
-                syarat_beda = eval_standar[pred_ai]['syarat']
-                if syarat_beda:
-                    st.warning(f"**Saran jika ingin tanam {pred_ai}:**\n" + "\n".join([f"- {s}" for s in syarat_beda]))
-                else:
-                    st.info(f"**Saran jika ingin tanam {pred_ai}:**\n- Parameter utama (pH, Suhu, Hara) secara umum sudah memenuhi ambang batas minimum untuk {pred_ai}. Anda bisa tetap menanamnya.")
-            
-            with st.expander("Lihat Detail Probabilitas AI"):
-                for i, cls in enumerate(model_ai.classes_):
-                    st.caption(f"{cls}: {probs[i]*100:.1f}%")
-                    st.progress(float(probs[i]))
-                    
-
-        # Kolom Kanan: Simulasi Kustom
+            # Ambil Prediksi & Probabilitas
+            pred_ai = model_ai.predict(input_val)[0]
+            probs = model_ai.predict_proba(input_val)[0] 
+        
+            st.success(f"Tanaman Disarankan: **{pred_ai}**")
+        
+        # Tampilkan Persentase
+        for i, cls in enumerate(model_ai.classes_):
+            p_persen = probs[i] * 100
+            st.caption(f"{cls}: {p_persen:.1f}%")
+            st.progress(float(probs[i]))
         with col_pakar:
-            st.markdown("#### 🎯 Simulasi Kesesuaian Manual")
-            tanaman_uji = st.selectbox("Pilih Tanaman Uji:", ["Caisim", "Jagung", "Singkong"], key="uji_simulasi")
+            st.markdown("#### 🎯 Hasil Sistem Pakar")
+            tanaman_uji = st.selectbox("Cek Tanaman Lain:", ["Caisim", "Jagung", "Singkong"])
             
-            status_uji = eval_standar[tanaman_uji]['status']
-            syarat_uji = eval_standar[tanaman_uji]['syarat']
-            
-            if "S1" in status_uji:
-                warna_uji = "#2ecc71"
-                pesan_status = "✅ SANGAT COCOK"
-            elif "S2" in status_uji:
-                warna_uji = "#f1c40f"
-                pesan_status = "⚠️ CUKUP COCOK"
+            res = eval_standar[tanaman_uji]
+            st.write(f"**Status: {res['status']}**")
+            if res['syarat']:
+                for s in res['syarat']:
+                    st.write(f"⚠️ {s}")
             else:
-                warna_uji = "#e74c3c"
-                pesan_status = "❌ TIDAK COCOK"
-                
-            st.markdown(f"<div style='background-color:{warna_uji};padding:10px;border-radius:5px;color:white;text-align:center;'><b>{pesan_status}</b><br>{status_uji}</div>", unsafe_allow_html=True)
-            
-            if syarat_uji:
-                st.write("**Perbaikan yang dibutuhkan:**")
-                for s in syarat_uji:
-                    st.write(f"- {s}")
-            else:
-                st.write("Kandungan tanah sudah optimal.")
+                st.write("✅ Lahan sudah optimal.")
 
-   # ==========================================
-    # TAB 2: KRIGING 3D 
-    # ==========================================
+           # --- Di dalam Tab 1 ---
+        
+    # --- DI DALAM TAB 1 ---
+
+    # 1. PERHITUNGAN LUAS AWAL (Tetap di belakang layar)
+        luas_otomatis = 0.0
+        try:
+            if len(df) >= 3:
+                luas_otomatis = hitung_luas_m2(df['Longitude'].values, df['Latitude'].values)
+        except:
+            luas_otomatis = 500.0
+
+        # 2. AREA INPUT TERPISAH
+        with st.expander("⚙️ Konfigurasi Sistem Digital Twin", expanded=True):
+            
+            # SEKSI A: TARGET UNSUR HARA (Kondisi Ideal Tanah)
+            st.markdown("### 🎯 1. Target Unsur Hara Tanah")
+            st.caption("Tentukan ambang batas ideal sesuai jenis komoditas yang akan ditanam.")
+            c1, c2, c3, c4 = st.columns(4)
+            target_ph = c1.number_input("Target pH", value=6.5, step=0.1, help="Standar keasaman tanah")
+            target_n = c2.number_input("Target N (mg/kg)", value=40.0)
+            target_p = c3.number_input("Target P (mg/kg)", value=20.0)
+            target_k = c4.number_input("Target K (mg/kg)", value=30.0)
+
+            st.divider() # Garis pemisah visual
+
+            # SEKSI B: HARGA PASAR (Kondisi Ekonomi)
+            st.markdown("### 💰 2. Parameter Ekonomi (Harga Pupuk)")
+            st.caption("Masukkan harga pasar terbaru per kilogram material.")
+            c5, c6, c7, c8 = st.columns(4)
+            harga_kapur = c5.number_input("Harga Kapur", value=5000)
+            harga_urea = c6.number_input("Harga Urea", value=10000)
+            harga_sp36 = c7.number_input("Harga SP-36", value=8000)
+            harga_kcl = c8.number_input("Harga KCl", value=12000)
+
+            st.divider()
+
+            # SEKSI C: DIMENSI FISIK (Terpisah Sendiri)
+            st.markdown("### 📏 3. Dimensi Lahan")
+            st.caption("Luas lahan total yang akan diproses oleh sistem.")
+            # Kita letakkan luas lahan di kolom yang lebih lebar agar menonjol
+            luas_input = st.number_input("Luas Lahan Total (m²)", 
+                                         value=int(luas_otomatis) if luas_otomatis > 0 else 600,
+                                         help="Angka ini akan dibagi rata ke seluruh titik sampel.")
+
+        # --- LOGIKA PERHITUNGAN TETAP SAMA ---
+        total_titik = len(df)
+        luas_per_titik = luas_input / total_titik if total_titik > 0 else 0
+    
+
+        # 4. FUNGSI ANALISIS PRESISI FULL NPK
+        def analisis_presisi_npk(row, lpt_val, h_urea, h_kapur, h_sp36, h_kcl, t_n, t_ph, t_p, t_k):
+            pesan = []
+            biaya_titik = 0
+            
+            # --- HITUNG KAPUR (Untuk pH) ---
+            if row['pH'] < t_ph:
+                selisih_ph = t_ph - row['pH']
+                kg_kapur = selisih_ph * 0.5 * (lpt_val / 10)
+                biaya_titik += kg_kapur * h_kapur
+                pesan.append(f"🧪 Kapur: {kg_kapur:.2f}kg")
+            
+            # --- HITUNG UREA (Untuk N) ---
+            if 'N_mg_kg' in row and row['N_mg_kg'] < t_n:
+                selisih_n = t_n - row['N_mg_kg']
+                kg_urea = (selisih_n / 10) * 0.01 * lpt_val
+                biaya_titik += kg_urea * h_urea
+                pesan.append(f"🍃 Urea: {kg_urea:.2f}kg")
+
+            # --- HITUNG SP-36 (Untuk P) ---
+            if 'P_mg_kg' in row and row['P_mg_kg'] < t_p:
+                selisih_p = t_p - row['P_mg_kg']
+                # Asumsi dosis: 0.008 kg per m2 untuk 10 poin defisit P
+                kg_sp36 = (selisih_p / 10) * 0.008 * lpt_val 
+                biaya_titik += kg_sp36 * h_sp36
+                pesan.append(f"🌾 SP-36: {kg_sp36:.2f}kg")
+
+            # --- HITUNG KCl (Untuk K) ---
+            if 'K_mg_kg' in row and row['K_mg_kg'] < t_k:
+                selisih_k = t_k - row['K_mg_kg']
+                # Asumsi dosis: 0.005 kg per m2 untuk 10 poin defisit K
+                kg_kcl = (selisih_k / 10) * 0.005 * lpt_val
+                biaya_titik += kg_kcl * h_kcl
+                pesan.append(f"🥔 KCl: {kg_kcl:.2f}kg")
+            
+            rekomendasi = " | ".join(pesan) if pesan else "✨ Optimal"
+            return rekomendasi, round(biaya_titik)
+
+        # 5. EKSEKUSI DATA
+        df_res = df.copy()
+        hasil_analisis = df_res.apply(
+            lambda r: analisis_presisi_npk(
+                r, luas_per_titik, harga_urea, harga_kapur, harga_sp36, harga_kcl, 
+                target_n, target_ph, target_p, target_k
+            ), axis=1
+        )
+        df_res['Kebutuhan Material (Kg)'], df_res['Estimasi Biaya (Rp)'] = zip(*hasil_analisis)
+
+        # 6. PERCANTIK TAMPILAN TABEL
+        df_display = df_res.copy()
+        df_display['Estimasi Biaya (Rp)'] = df_display['Estimasi Biaya (Rp)'].apply(lambda x: f"Rp {int(x):,}".replace(',', '.'))
+        df_display['Urutan'] = df_display['Nama_Titik'].str.extract('(\d+)').astype(int)
+        df_display = df_display.sort_values('Urutan').drop(columns=['Urutan']).reset_index(drop=True)
+
+        # 7. TAMPILKAN TABEL DAN TOTAL BIAYA
+        st.write("### 📊 Tabel Rekomendasi per Titik (Full NPK)")
+        st.table(df_display[['Nama_Titik', 'pH', 'Kebutuhan Material (Kg)', 'Estimasi Biaya (Rp)']])
+        
+        total_biaya_lahan = df_res['Estimasi Biaya (Rp)'].sum()
+        st.info(f"**Total Anggaran Pengadaan Pupuk & Kapur:** Rp {int(total_biaya_lahan):,}".replace(',', '.'))
+# ==========================================
+# TAB 2: PEMODELAN 3D (SINKRON DENGAN TAB 1)
+# ==========================================
+
     with tab_spasial:
-        st.subheader("Pemodelan Spasial 3D (Kriging)")
-        
-        # Pastikan tidak ada data koordinat yang kosong sebelum membuat area grid
-        df_kriging = df.dropna(subset=['Latitude', 'Longitude'])
-        
-        gx = np.linspace(df_kriging['Longitude'].min(), df_kriging['Longitude'].max(), 50)
-        gy = np.linspace(df_kriging['Latitude'].min(), df_kriging['Latitude'].max(), 50)
-        
+        st.subheader("Visualisasi Digital Twin (Info Hover Lengkap)")
+
+        # 1. Definisi Parameter & Warna
         params = {
-            "Nitrogen (N)": {"col": "N_mg_kg", "color": "Blues"}, 
-            "Fosfor (P)": {"col": "P_mg_kg", "color": "YlOrBr"}, 
-            "Kalium (K)": {"col": "K_mg_kg", "color": "Reds"}, 
-            "pH Tanah": {"col": "pH", "color": "Viridis"}, 
-            "Kelembapan (%)": {"col": "Kelembapan_Persen", "color": "Teal"}, 
-            "Suhu Udara (°C)": {"col": "Suhu_Udara", "color": "Plasma"}
+            'pH': {'col': 'pH', 'color': 'Viridis'},
+            'Nitrogen': {'col': 'N_mg_kg', 'color': 'Greens'},
+            'Fosfor': {'col': 'P_mg_kg', 'color': 'YlOrRd'},
+            'Kalium': {'col': 'K_mg_kg', 'color': 'Purples'},
+            'Kelembapan': {'col': 'Kelembapan_Persen', 'color': 'Blues'},
+            'Suhu': {'col': 'Suhu_Udara', 'color': 'Reds'}
         }
-        
-        col_k1, col_k2 = st.columns(2)
-        for i, (label, info) in enumerate(params.items()):
-            with (col_k1 if i % 2 == 0 else col_k2):
-                st.markdown(f"**{label}**")
-                
-                # Buang baris yang nilai hara/pH-nya kosong
-                df_param = df_kriging.dropna(subset=[info['col']])
-                
-                try:
-                    # Konversi paksa ke angka desimal (float)
-                    x_val = df_param['Longitude'].astype(float).values
-                    y_val = df_param['Latitude'].astype(float).values
-                    z_val = df_param[info['col']].astype(float).values
-                    
-                    if np.std(z_val) == 0:
-                        z_val = z_val + np.random.normal(0, 0.0001, len(z_val))
 
-                    # ALGORITMA KRIGING
-                    ok = OrdinaryKriging(
-                        x_val, y_val, z_val, 
-                        variogram_model='spherical', 
-                        pseudo_inv=True,             
-                        exact_values=False 
-                    )
-                    z, _ = ok.execute('grid', gx, gy)
-                    
-                    # 1. BUAT LAYER PERMUKAAN (SURFACE) KRIGING 3D
-                    surface_layer = go.Surface(
-                        z=z, 
-                        x=gx, 
-                        y=gy, 
-                        colorscale=info['color'], 
-                        showscale=False,
-                        opacity=0.9 # Sedikit transparan agar titik di bawah tidak sepenuhnya hilang
-                    )
-                    
-                    # 2. BUAT LAYER TITIK SAMPEL (SCATTER 3D) DI ATAS PERMUKAAN
-                    # Kita naikkan z_val sedikit (ditambah 5% dari tinggi maksimal gelombang)
-                    # agar titik hitamnya tidak tenggelam di dalam "bukit" Kriging.
-                    elevasi_titik = z_val + (np.max(z) - np.min(z)) * 0.05
-                    
-                    scatter_layer = go.Scatter3d(
-                        x=x_val, 
-                        y=y_val, 
-                        z=elevasi_titik,
-                        mode='markers+text',
-                        marker=dict(size=5, color='black', symbol='circle'),
-                        text=df_param['Nama_Titik'].astype(str).values if 'Nama_Titik' in df_param.columns else [str(n+1) for n in range(len(x_val))],
-                        textposition='top center',
-                        textfont=dict(size=12, color='black', weight='bold'),
-                        name="Titik Sampel"
-                    )
-                    
-                    # Gabungkan kedua layer 3D ke dalam satu figure
-                    fig = go.Figure(data=[surface_layer, scatter_layer])
-                    
-                    fig.update_layout(
-                        height=500, 
-                        margin=dict(l=0, r=0, b=0, t=0), 
-                        scene=dict(
-                            aspectmode='data', # <--- INI KUNCI UTAMA UNTUK 3D (Memaksa rasio asli data)
-                            zaxis_title=label, 
-                            xaxis=dict(showticklabels=True, title="Longitude"),
-                            yaxis=dict(showticklabels=True, title="Latitude")
-                        ),
-                        showlegend=False
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                except Exception as e:
-                    st.error(f"Gagal memproses {label}. Error detail: {e}")
-    # ==========================================
-    # TAB 3: PETA HEATMAP 2D (KONTUR DATAR)
-    # ==========================================
-    with tab_heatmap:
-        st.subheader("Peta Persebaran Hara 2D (Heatmap)")
-        st.markdown("Peta ini menampilkan proyeksi datar (top-down) dari hasil interpolasi Kriging, memudahkan pembacaan lokasi presisi untuk setiap titik sampel.")
-        
-        # Grid resolusi tinggi untuk Heatmap yang lebih mulus
-        gx_2d = np.linspace(df_kriging['Longitude'].min(), df_kriging['Longitude'].max(), 100)
-        gy_2d = np.linspace(df_kriging['Latitude'].min(), df_kriging['Latitude'].max(), 100)
-        
-        col_h1, col_h2 = st.columns(2)
-        for i, (label, info) in enumerate(params.items()):
-            with (col_h1 if i % 2 == 0 else col_h2):
-                st.markdown(f"**{label}**")
-                
-                df_param_2d = df_kriging.dropna(subset=[info['col']])
-                
-                try:
-                    x_val = df_param_2d['Longitude'].astype(float).values
-                    y_val = df_param_2d['Latitude'].astype(float).values
-                    z_val = df_param_2d[info['col']].astype(float).values
-                    
-                    if np.std(z_val) == 0:
-                        z_val = z_val + np.random.normal(0, 0.0001, len(z_val))
+        pilihan_label = st.selectbox("Pilih Parameter:", list(params.keys()))
+        info = params[pilihan_label]
 
-                    # Kriging dengan Spherical Model (Sama dengan 3D)
-                    ok = OrdinaryKriging(
-                        x_val, y_val, z_val, 
-                        variogram_model='spherical', 
-                        pseudo_inv=True,             
-                        exact_values=False 
-                    )
-                    z_2d, _ = ok.execute('grid', gx_2d, gy_2d)
-                    
-                    # 1. LAYER HEATMAP 2D (Contour)
-                    heatmap_layer = go.Contour(
-                        z=z_2d, 
-                        x=gx_2d, 
-                        y=gy_2d, 
-                        colorscale=info['color'], 
-                        showscale=True, # Tampilkan skala warna
-                        colorbar=dict(title=label, len=0.8, thickness=15)
-                    )
-                    
-                    # 2. LAYER TITIK SAMPEL 2D
-                    scatter_layer_2d = go.Scatter(
-                        x=x_val, 
-                        y=y_val, 
-                        mode='markers+text',
-                        marker=dict(size=8, color='black', line=dict(width=1.5, color='white')), 
-                        text=df_param_2d['Nama_Titik'].astype(str).values if 'Nama_Titik' in df_param_2d.columns else [str(n+1) for n in range(len(x_val))],
-                        textposition='top center',
-                        textfont=dict(size=12, color='black', weight='bold'),
-                        name="Titik Sampel"
-                    )
-                    
-                    fig_2d = go.Figure(data=[heatmap_layer, scatter_layer_2d])
-                    
-                    # Layout 2D Datar
-                    # Layout 2D Datar dengan Skala Rasio Terkunci (1:1)
-                    fig_2d.update_layout(
-                        height=600, # Perbesar sedikit agar nyaman dilihat
-                        margin=dict(l=20, r=20, b=20, t=10), 
-                        xaxis=dict(
-                            title="Longitude",
-                            scaleanchor="y",  # <--- INI KUNCI UTAMANYA
-                            scaleratio=1,     # <--- Mengunci rasio 1:1 antara X dan Y
-                            showgrid=False
-                        ),
-                        yaxis=dict(
-                            title="Latitude",
-                            showgrid=False
-                        ),
-                        plot_bgcolor='white'
-                    )
-                    
-                    # Matikan fitur zoom yang tidak beraturan agar peta tidak rusak saat digeser
-                    fig_2d.update_xaxes(fixedrange=True)
-                    fig_2d.update_yaxes(fixedrange=True)
-                    
-                    st.plotly_chart(fig_2d, use_container_width=True)
-                    
-                except Exception as e:
-                    st.error(f"Gagal memproses Heatmap {label}: {e}")
+        try:
+            from scipy.interpolate import griddata
+            from scipy.spatial import KDTree # Untuk mencari nama titik terdekat
+            
+            # Bersihkan data
+            df_p = df.dropna(subset=[info['col']])
+            lons = df_p['Longitude'].values
+            lats = df_p['Latitude'].values
+            z_val = df_p[info['col']].values
+            nama_titik_asli = df_p['Nama_Titik'].values
+
+            # 2. Buat Grid (Sumbu Y dibalik: Max ke Min agar T1 di Kiri Atas)
+            ux = np.linspace(lons.min(), lons.max(), 50)
+            uy = np.linspace(lats.max(), lats.min(), 50) 
+            X_grid, Y_grid = np.meshgrid(ux, uy)
+
+            # 3. Logika Hover: Mencari Nama Titik Terdekat untuk setiap titik di Grid
+            tree = KDTree(np.column_stack((lons, lats)))
+            _, indices = tree.query(np.column_stack((X_grid.ravel(), Y_grid.ravel())))
+            closest_names = nama_titik_asli[indices].reshape(X_grid.shape)
+
+            # 4. Interpolasi Grid (Method Cubic agar Mulus)
+            Z = griddata((lons, lats), z_val, (X_grid, Y_grid), method='cubic')
+
+            # 5. Visualisasi Plotly
+            fig = go.Figure()
+
+            # A. Permukaan 3D dengan Custom Data (Nama Titik)
+            fig.add_trace(go.Surface(
+                x=X_grid, 
+                y=Y_grid, 
+                z=Z,
+                customdata=closest_names, # Memasukkan nama titik ke hover
+                colorscale=info['color'],
+                colorbar_title=pilihan_label,
+                hovertemplate=(
+                    "<b>📍 Lokasi: Sekitar %{customdata}</b><br>" +
+                    "----------------------------<br>" +
+                    "<b>Latitude</b>: %{y:.6f}<br>" +
+                    "<b>Longitude</b>: %{x:.6f}<br>" +
+                    f"<b>Kadar {pilihan_label}</b>: " + "%{z:.2f}<extra></extra>"
+                )
+            ))
+
+            # B. Titik Sampel (Titik Merah agar Sinkron dengan Tab 1)
+            fig.add_trace(go.Scatter3d(
+                x=lons, 
+                y=lats, 
+                z=z_val,
+                mode='markers+text',
+                text=nama_titik_asli,
+                name="Titik Riil",
+                marker=dict(size=4, color='red', line=dict(color='white', width=1)),
+                textfont=dict(size=9, color='black'),
+                hovertemplate="<b>Titik: %{text}</b><extra></extra>"
+            ))
+
+            # 6. Atur Tampilan Sumbu
+            fig.update_layout(
+                scene=dict(
+                    aspectmode='manual',
+                    aspectratio=dict(x=1, y=1, z=0.4),
+                    xaxis_title="Longitude",
+                    yaxis_title="Latitude",
+                    zaxis_title=pilihan_label,
+                    xaxis=dict(tickformat=".5f"),
+                    yaxis=dict(tickformat=".5f")
+                ),
+                margin=dict(l=0, r=0, b=0, t=40),
+                height=700
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+
+        except Exception as e:
+            st.error(f"Gagal memproses visualisasi: {e}")
