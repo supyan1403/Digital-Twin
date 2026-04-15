@@ -32,7 +32,7 @@ st.set_page_config(page_title="Digital Twin Pertanian", layout="wide", page_icon
 def train_model():
     """Menggunakan dataset awal sebagai basis otak AI"""
     try:
-        df_base = pd.read_excel('Dataset_Kriging_Terklasifikasi1.xlsx')
+        df_base = pd.read_excel('Dataset2.xlsx')
         X = df_base[['N_mg_kg', 'P_mg_kg', 'K_mg_kg', 'pH', 'Kelembapan_Persen', 'Suhu_Udara']]
         y = df_base['Jenis_Komoditas']
         model = RandomForestClassifier(n_estimators=100, random_state=42)
