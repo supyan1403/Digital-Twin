@@ -6,7 +6,7 @@ try:
     df_asli = pd.read_excel('Dataset.xlsx')
     print(f"✅ Berhasil membaca {len(df_asli)} titik data asli.")
 except Exception as e:
-    print(f"❌ Error: File Dataset2.xlsx tidak ditemukan. Detail: {e}")
+    print(f"❌ Error: File Dataset.xlsx tidak ditemukan. Detail: {e}")
     exit()
 
 
