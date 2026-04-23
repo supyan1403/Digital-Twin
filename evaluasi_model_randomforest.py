@@ -9,6 +9,8 @@ import matplotlib.pyplot as plt
 nama_file = 'Dataset_Augmented.xlsx'
 df = pd.read_excel(nama_file)
 
+df = df.dropna()
+
 
 
 kolom_fitur = ['N_mg_kg', 'P_mg_kg', 'K_mg_kg', 'pH', 'Kelembapan_Persen', 'Suhu_Udara']
@@ -45,6 +47,6 @@ sns.heatmap(cm, annot=True, fmt='d', cmap='YlGnBu',
 plt.title('Confusion Matrix - Prediksi Rekomendasi Komoditas')
 plt.ylabel('Komoditas Asli (Target Ideal)')
 plt.xlabel('Rekomendasi AI')
-plt.savefig('Confusion_Matrix_Komoditas_Sinta.png', dpi=300, bbox_inches='tight')
-print("✅ Grafik berhasil disimpan sebagai 'Confusion_Matrix_Komoditas_Sinta.png'")
+plt.savefig('Confusion_Matrix_Komoditas.png', dpi=300, bbox_inches='tight')
+print("✅ Grafik berhasil disimpan sebagai 'Confusion_Matrix_Komoditas.png'")
 plt.show()
