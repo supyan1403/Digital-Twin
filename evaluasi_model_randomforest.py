@@ -44,7 +44,7 @@ cm = confusion_matrix(y_test, y_pred)
 plt.figure(figsize=(6, 4))
 sns.heatmap(cm, annot=True, fmt='d', cmap='YlGnBu', 
             xticklabels=rf_model.classes_, yticklabels=rf_model.classes_)
-plt.title('Confusion Matrix - Prediksi Rekomendasi Komoditas')
+
 plt.ylabel('Komoditas Asli (Target Ideal)')
 plt.xlabel('Rekomendasi AI')
 plt.savefig('Confusion_Matrix_Komoditas.png', dpi=300, bbox_inches='tight')

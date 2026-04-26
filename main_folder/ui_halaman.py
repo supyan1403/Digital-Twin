@@ -218,8 +218,23 @@ def tampilkan_tab_dashboard(df, model_ai, skor_akurasi):
         xaxis_title="ID Titik Sampel",
         yaxis_title="Estimasi Biaya (Rp)",
         template="plotly_white",
-        height=450,
-        margin=dict(l=20, r=20, t=30, b=20)
+        
+        # 1. TAMBAHKAN WIDTH & UBAH HEIGHT
+        width=500,   # Memaksa grafik menjadi lebih kotak (tidak memanjang ke samping)
+        height=550,  # Ditinggikan sedikit agar batangnya terlihat jelas
+        
+        margin=dict(l=20, r=20, t=30, b=20),
+        
+        # 2. TAMBAHKAN PENGATURAN FONT GLOBAL & SUMBU
+        font=dict(size=14, color="black"), # Memperbesar font dasar
+        xaxis=dict(
+            title_font=dict(size=16, color="black", family="Arial"), # Judul sumbu X lebih besar
+            tickfont=dict(size=14, color="black") # Angka ID lebih besar
+        ),
+        yaxis=dict(
+            title_font=dict(size=16, color="black", family="Arial"), # Judul sumbu Y lebih besar
+            tickfont=dict(size=14, color="black") # Angka Rupiah lebih besar
+        )
     )
 
     

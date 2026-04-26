@@ -13,27 +13,37 @@ def train_model():
         from sklearn.ensemble import RandomForestClassifier
         from sklearn.model_selection import train_test_split
         from sklearn.metrics import accuracy_score
+        import pandas as pd
+        import os
 
+        # Gunakan path absolut agar aman dari masalah direktori
+        BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+        path_ke_excel = os.path.join(BASE_DIR, '..', 'Dataset_Augmented.xlsx')
 
-        df_base = pd.read_excel('Dataset_Augmented.xlsx') 
+        df_base = pd.read_excel(path_ke_excel) 
+        
+        # --- LANGKAH KRUSIAL: BERSIHKAN DULU ---
+        df_base = df_base.dropna() # Bersihkan df_base dulu sampai tuntas
+        
+        # --- BARU KEMUDIAN DEFINISIKAN X DAN y ---
         X = df_base[['N_mg_kg', 'P_mg_kg', 'K_mg_kg', 'pH', 'Kelembapan_Persen', 'Suhu_Udara']]
         y = df_base['Jenis_Komoditas']
-        
+
+        # Pastikan data tidak kosong setelah dibersihkan
+        if len(df_base) == 0:
+            raise ValueError("Dataset kosong setelah menghapus baris NaN!")
 
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-        
 
         model = RandomForestClassifier(
-        n_estimators=50,
-        max_depth=4,
-        random_state=42
-    )
+            n_estimators=50,
+            max_depth=4,
+            random_state=42
+        )
         model.fit(X_train, y_train)
-        
 
         y_pred = model.predict(X_test)
         akurasi = accuracy_score(y_test, y_pred) * 100
-        
 
         return {"model": model, "akurasi": akurasi}
         
@@ -196,5 +206,12 @@ def generate_pdf_report(df, total_biaya, komoditas):
     pdf.set_font("Arial", 'B', 12)
     pdf.cell(140, 10, "TOTAL ESTIMASI BIAYA KESELURUHAN", 0, 0, 'R')
     pdf.cell(50, 10, f"Rp {int(total_biaya):,}".replace(',', '.'), 1, 1, 'R')
+
+    # Ambil output PDF
+    pdf_output = pdf.output()
     
-    return bytes(pdf.output())
+    # Jika outputnya bytearray, konversi ke bytes
+    if isinstance(pdf_output, bytearray):
+        return bytes(pdf_output)
+    
+    return pdf.output()

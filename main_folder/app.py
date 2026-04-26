@@ -1,6 +1,9 @@
 import streamlit as st
 import pandas as pd
 import io
+import os
+
+print(os.listdir())
 
 
 from kalkulasi import train_model, konversi_koordinat, hitung_luas_dan_grid

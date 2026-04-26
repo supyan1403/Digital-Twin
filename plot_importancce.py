@@ -36,8 +36,7 @@ ax = sns.barplot(
 )
 
 # 3. Kustomisasi Label dan Judul
-plt.title('Tingkat Kepentingan Fitur  - Random Forest', 
-          fontsize=16, fontweight='bold', pad=20)
+
 plt.xlabel('Nilai Kepentingan (Mean Decrease in Impurity)', fontsize=12, labelpad=15)
 plt.ylabel('Parameter Lahan', fontsize=12)
 
